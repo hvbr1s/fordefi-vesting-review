@@ -65,7 +65,7 @@ def load_vesting_configs():
         vault_id = doc.id
         tokens = doc_data.get("tokens", [])
 
-        # Each doc can contain an array of tokens
+        # Each doc can contain an array of tokens arrays
         for token_info in tokens:
             # NOTE -> decided against putting the smart contract address in that DB because 
             # the risk of mixing destination address and contract address are too great imo
