@@ -203,8 +203,8 @@ def main():
     # 2) Immediately do an initial refresh (so we have tasks right away)
     refresh_vesting_schedules()
 
-    # 3) Schedule a daily refresh at noon local time (12:00)
-    schedule.every().day.at("12:00").do(refresh_vesting_schedules)
+    # 3) Schedule a daily refresh at 2pm CET
+    schedule.every().day.at("14:00", "CET").do(refresh_vesting_schedules)
 
     # 4) Keep the script alive
     while True:
