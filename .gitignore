@@ -8,6 +8,7 @@ wheels/
 uv.lock
 pyproject.toml
 .python-version
+.DS_STORE
 
 # Virtual environments
 .venv

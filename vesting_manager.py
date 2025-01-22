@@ -102,7 +102,7 @@ def execute_vest_for_asset(cfg: dict):
     print(f"\n🔔 It's vesting time for {cfg['asset']} (Vault ID: {cfg['vault_id']})!")
     try:
         if cfg["type"] == "native" and cfg["ecosystem"] == "evm" and cfg["value"] != "0":
-            # Send native EVM token (e.g., BNB, ETH)
+            # Send native EVM token (BNB, ETH, etc.)
             transfer_native_gcp(
                 chain=cfg["chain"],
                 vault_id=cfg["vault_id"],
@@ -173,14 +173,14 @@ def schedule_vesting_for_asset(cfg: dict, tag: str = "vesting"):
             schedule.every(24).hours.do(execute_vest_for_asset, cfg).tag(tag)
             return schedule.CancelJob
 
-    # Check every minute if it's time to run; group them with .tag(tag)
+    # Check every minute if it's time to run
     schedule.every(1).minutes.do(job_launcher).tag(tag)
 
 
 def refresh_vesting_schedules():
     """
     Clears out existing vesting jobs, reloads configs, and re-schedules them.
-    We call this at midnight every day so new config entries are picked up.
+    We call this at noon local time every day so new config entries are picked up.
     """
     print("\n--- Refreshing vesting schedules from Firestore ---")
     # 1) Clear old vesting jobs (tag='vesting')
@@ -203,7 +203,7 @@ def main():
     # 2) Immediately do an initial refresh (so we have tasks right away)
     refresh_vesting_schedules()
 
-    # 3) Also schedule a daily refresh at noon local time (12:00)
+    # 3) Schedule a daily refresh at noon local time (12:00)
     schedule.every().day.at("12:00").do(refresh_vesting_schedules)
 
     # 4) Keep the script alive
