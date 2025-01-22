@@ -179,10 +179,12 @@ def schedule_vesting_for_asset(cfg: dict, tag: str = "vesting"):
 
 def refresh_vesting_schedules():
     """
-    Clears out existing vesting jobs, reloads configs, and re-schedules them.
-    We call this at noon local time every day so new config entries are picked up.
+    Clears out existing vesting jobs, reloads configs from Firebase and re-schedules them.
+    We call this at 2pm CET time every day so new config entries are picked up.
     """
-    print("\n--- Refreshing vesting schedules from Firestore ---")
+
+    current_time_utc = datetime.now(pytz.UTC).strftime("%H:%M")
+    print(f"\n--- Refreshing vesting schedules from Firestore at {current_time_utc} UTC ---")
     # 1) Clear old vesting jobs (tag='vesting')
     schedule.clear('vesting')
 
