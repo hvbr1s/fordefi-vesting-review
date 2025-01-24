@@ -105,6 +105,7 @@ def execute_vest_for_asset(cfg: dict):
             # Send native EVM token (BNB, ETH, etc.)
             transfer_native_gcp(
                 chain=cfg["chain"],
+                native_asset=cfg["asset"].lower(),
                 vault_id=cfg["vault_id"],
                 destination=cfg["destination"],
                 value=cfg["value"],

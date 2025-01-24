@@ -1,71 +1,24 @@
-import requests
-import base64
 import json
 import datetime
 from decimal import Decimal
 from signer.api_signer import sign
+from push_to_api.push_tx import push_tx
+from configs.evm_tokens import EVM_TOKEN_CONFIGS
 from secret_manager.gcp_secret_manager import access_secret
 
-
 ### FUNCTIONS
-def broadcast_tx(path, access_token, signature, timestamp, request_body):
-
-    try:
-        resp_tx = requests.post(
-            f"https://api.fordefi.com{path}",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "x-signature": base64.b64encode(signature),
-                "x-timestamp": timestamp.encode(),
-            },
-            data=request_body,
-        )
-        resp_tx.raise_for_status()
-        return resp_tx
-
-    except requests.exceptions.HTTPError as e:
-        error_message = f"HTTP error occurred: {str(e)}"
-        if resp_tx.text:
-            try:
-                error_detail = resp_tx.json()
-                error_message += f"\nError details: {error_detail}"
-            except json.JSONDecodeError:
-                error_message += f"\nRaw response: {resp_tx.text}"
-        raise RuntimeError(error_message)
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Network error occurred: {str(e)}")
-
-
 def evm_tx_tokens(evm_chain, vault_id, destination, custom_note, value, token):
 
     sanitized_token_name = token.lower().strip()
 
-    value_eighteen_decimal_tokens = str(int(Decimal(value) * Decimal('1000000000000000000'))) # 18 decimals
-    value_six_decimal_tokens =  str(int(Decimal(value) * Decimal('1000000')))  # 6 decimals
-
-    if evm_chain == "bsc":
-        if sanitized_token_name == "usdt":
-            contract_address = "0x55d398326f99059fF775485246999027B3197955"
-            value = value_eighteen_decimal_tokens
-        elif sanitized_token_name == "btcb":
-            contract_address = "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"
-            value = value_eighteen_decimal_tokens
-        else:
-            raise ValueError(f"Token '{token}' is not supported for chain '{evm_chain}'") 
-    elif evm_chain == "ethereum":
-        if sanitized_token_name == "usdt":
-            contract_address = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
-            value = value_six_decimal_tokens 
-        elif sanitized_token_name == "pepe":
-            contract_address = "0x6982508145454Ce325dDbE47a25d4ec3d2311933"
-            value = value_eighteen_decimal_tokens
-        elif sanitized_token_name == "basedai":
-            contract_address = "0x44971ABF0251958492FeE97dA3e5C5adA88B9185"
-            value = value_eighteen_decimal_tokens
-        else:
-            raise ValueError(f"Token '{token}' is not supported for chain '{evm_chain}'") 
-    else:
+    if evm_chain not in EVM_TOKEN_CONFIGS or sanitized_token_name not in EVM_TOKEN_CONFIGS[evm_chain]:
         raise ValueError(f"Token '{token}' is not supported for chain '{evm_chain}'")
+    
+    token_config = EVM_TOKEN_CONFIGS[evm_chain][sanitized_token_name]
+    decimals = token_config["decimals"]
+    contract_address = token_config["contract_address"]
+    
+    value = str(int(Decimal(value) * Decimal(10**decimals)))
 
     request_json =  {
     "signer_type": "api_signer",
@@ -115,7 +68,7 @@ def transfer_token_gcp(chain, token_ticker, vault_id, destination, amount, note)
         dict: Response from the Fordefi API
     """
     # Set config
-    GCP_PROJECT_ID = 'inspired-brand-447513-i8'
+    GCP_PROJECT_ID = 'inspired-brand-447513-i8' ## CHANGE to your GCP project name
     FORDEFI_API_USER_TOKEN = 'USER_API_TOKEN'
     USER_API_TOKEN = access_secret(GCP_PROJECT_ID, FORDEFI_API_USER_TOKEN, 'latest')
     path = "/api/v1/transactions"
@@ -136,6 +89,6 @@ def transfer_token_gcp(chain, token_ticker, vault_id, destination, amount, note)
     # Sign transaction with API Signer
     signature = sign(payload=payload, project=GCP_PROJECT_ID)
 
-    # Broadcast tx
-    resp_tx = broadcast_tx(path, USER_API_TOKEN, signature, timestamp, request_body)
+    # Push tx to Fordefi API
+    resp_tx = push_tx(path, USER_API_TOKEN, signature, timestamp, request_body)
     return resp_tx.json()
