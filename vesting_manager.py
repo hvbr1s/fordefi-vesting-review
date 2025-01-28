@@ -69,6 +69,7 @@ def load_vesting_configs():
         for token_info in tokens:
             # NOTE -> decided against putting the smart contract address in that DB because 
             # the risk of mixing destination address and contract address are too great imo
+            # The Vesting time should be expressed UTC time
             cfg = {
                 "vault_id": vault_id,
                 "asset":        token_info["asset"],
@@ -78,7 +79,7 @@ def load_vesting_configs():
                 "destination":  token_info["destination"],
                 "value":        token_info["value"],
                 "note":         token_info["note"],
-                "cliff_days":   token_info["cliff_days"],
+                "cliff_days":   token_info["cliff_days"], # This should be UTC time
                 "vesting_time": token_info["vesting_time"]
             }
             configs.append(cfg)
@@ -192,9 +193,8 @@ def main():
     # 2) Initial refresh so we have tasks immediately
     refresh_vesting_schedules()
 
-    # 3) Schedule a daily refresh at 4pm CET (using schedule’s time syntax)
-    #    This refresh uses the local system time zone.
-    schedule.every().day.at("10:00", "CET").do(refresh_vesting_schedules)
+    # 3) Schedule a daily refresh at your_time UTC which is the local system time zone.
+    schedule.every().day.at("13:00", "UTC").do(refresh_vesting_schedules)
 
     # 4) Keep the script alive
     while True:
