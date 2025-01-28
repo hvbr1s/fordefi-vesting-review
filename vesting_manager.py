@@ -86,15 +86,6 @@ def load_vesting_configs():
     return configs
 
 
-def compute_first_vesting_date(cliff_days: int) -> datetime:
-    """
-    Returns a base date/time in UTC for the first vest.
-    If cliff_days=1, the first vest is pushed out by 1 day from now.
-    """
-    now = datetime.now(pytz.UTC)
-    return now + timedelta(days=cliff_days)
-
-
 def execute_vest_for_asset(cfg: dict):
     """
     Execute a single vest for the given asset/config.
@@ -105,7 +96,6 @@ def execute_vest_for_asset(cfg: dict):
             # Send native EVM token (BNB, ETH, etc.)
             transfer_native_gcp(
                 chain=cfg["chain"],
-                native_asset=cfg["asset"].lower(),
                 vault_id=cfg["vault_id"],
                 destination=cfg["destination"],
                 value=cfg["value"],
@@ -115,16 +105,15 @@ def execute_vest_for_asset(cfg: dict):
             # Send ERC20 token (USDT, USDC, etc.)
             transfer_token_gcp(
                 chain=cfg["chain"],
-                token_ticker=cfg["asset"].lower(),
+                token_ticker=cfg["asset"],
                 vault_id=cfg["vault_id"],
                 destination=cfg["destination"],
                 amount=cfg["value"],
                 note=cfg["note"]
             )
         elif cfg["value"] == "0":
-            # If the vesting amount is zero, print so
+            # If the vesting amount is zero, just inform
             print(f'❌ Vesting amount for {cfg["asset"]} in Firebase is 0!')
-
         else:
             raise ValueError(f"Unsupported configuration: type={cfg['type']}, ecosystem={cfg['ecosystem']}")
 
@@ -135,79 +124,77 @@ def execute_vest_for_asset(cfg: dict):
 
 def schedule_vesting_for_asset(cfg: dict, tag: str = "vesting"):
     """
-    Computes the date/time for the first vest in CET, applies cliff_days + vesting_time,
-    then sets up a 'launcher' job that schedules a daily vest for this asset.
-    The extra 'tag' param lets us group these jobs so we can clear them later if needed.
+    We take the vesting time (HH:MM) and cliff_days from cfg, and do the following:
+
+    1) Compute the local day/time for the very first vest (including cliff_days).
+    2) If that time is already in the past 'today', push it to tomorrow.
+    3) Schedule that job to run daily at vest_hour:vest_minute (local system time).
+
+    NOTE: 'schedule' library by default runs on the system's local time -> need to check with GCP
     """
-    cliff_days = cfg["cliff_days"]
-    vesting_time = cfg["vesting_time"] 
-    vest_hour, vest_minute = map(int, vesting_time.split(":"))
+    vest_hour, vest_minute = map(int, cfg["vesting_time"].split(":"))
 
-    # Compute the base vest date in UTC
-    first_vest_datetime_utc = compute_first_vesting_date(cliff_days)
+    # Calculate 'cliff_days' offset from now (in UTC).
+    now_utc = datetime.now(pytz.UTC)
+    first_vest_date_utc = now_utc + timedelta(days=cfg["cliff_days"])
 
-    # Convert that to CET and override hour/minute
-    cet = pytz.timezone("CET")
-    cliff_in_cet = first_vest_datetime_utc.astimezone(cet)
-    cliff_in_cet = cliff_in_cet.replace(
+    # Convert from UTC to local server time zone
+    local_tz = pytz.timezone("CET") 
+    first_vest_local = first_vest_date_utc.astimezone(local_tz)
+
+    # Applies the vest_hour:vest_minute
+    first_vest_local = first_vest_local.replace(
         hour=vest_hour,
         minute=vest_minute,
         second=0,
         microsecond=0
     )
 
-    # If that time is already in the past for today, push to the next day
-    now_cet = datetime.now(tz=cet)
-    if cliff_in_cet <= now_cet:
-        cliff_in_cet += timedelta(days=1)
+    # If we've passed that local time for the day, push to tomorrow
+    now_local = datetime.now(local_tz)
+    if first_vest_local <= now_local:
+        first_vest_local += timedelta(days=1)
 
-    # Convert back to UTC for scheduling
-    first_run_utc = cliff_in_cet.astimezone(pytz.UTC)
-    print(f"⏰ {cfg['asset']} (Vault ID: {cfg['vault_id']}) first vest scheduled for: {first_run_utc} UTC")
+    # Format the HH:MM in local time for schedule.every().day.at("HH:MM")
+    at_string = first_vest_local.strftime("%H:%M")
 
-    def job_launcher():
-        now_utc = datetime.now(pytz.UTC)
-        if now_utc >= first_run_utc:
-            # Vest now
-            execute_vest_for_asset(cfg)
-            # Then schedule to repeat every 24 hours
-            schedule.every(24).hours.do(execute_vest_for_asset, cfg).tag(tag)
-            return schedule.CancelJob
+    # Small function that's calling the vest
+    def daily_vest_job():
+        execute_vest_for_asset(cfg)
 
-    # Check every minute if it's time to run
-    schedule.every(1).minutes.do(job_launcher).tag(tag)
+    # Schedule the job every day at the local time "CET"
+    schedule.every().day.at(at_string).do(daily_vest_job).tag(tag)
+
+    print(f"⏰ {cfg['asset']} (Vault ID: {cfg['vault_id']}) first daily vest scheduled for {first_vest_local} local time.")
 
 
 def refresh_vesting_schedules():
     """
-    Clears out existing vesting jobs, reloads configs from Firebase and re-schedules them.
-    We call this at 2pm CET time every day so new config entries are picked up.
+    Clears out existing vesting jobs, reloads configs, and re-schedules them.
+    We call this daily so that any new config entries are picked up.
     """
-
-    current_time_utc = datetime.now(pytz.UTC).strftime("%H:%M")
-    print(f"\n--- Refreshing vesting schedules from Firestore at {current_time_utc} UTC ---")
-    # 1) Clear old vesting jobs (tag='vesting')
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    print(f"\n--- Refreshing vesting schedules from Firestore at {current_time} ---")
     schedule.clear('vesting')
 
-    # 2) Load updated configs
     configs = load_vesting_configs()
     print(f"Loaded {len(configs)} vesting configs.")
 
-    # 3) Re-schedule tasks for each config
     for cfg in configs:
         schedule_vesting_for_asset(cfg, tag="vesting")
 
 
 def main():
-    # 1) Init Firebase
+    # 1) Initialize Firebase
     firebase_admin.initialize_app()
     print("Firebase initialized successfully!")
 
-    # 2) Immediately do an initial refresh (so we have tasks right away)
+    # 2) Initial refresh so we have tasks immediately
     refresh_vesting_schedules()
 
-    # 3) Schedule a daily refresh at 2pm CET
-    schedule.every().day.at("14:00", "CET").do(refresh_vesting_schedules)
+    # 3) Schedule a daily refresh at 4pm CET (using schedule’s time syntax)
+    #    This refresh uses the local system time zone.
+    schedule.every().day.at("10:00", "CET").do(refresh_vesting_schedules)
 
     # 4) Keep the script alive
     while True:
